@@ -1,0 +1,5 @@
+bootloader/build/
+__pycache__/
+dist/
+build/
+*.spec
