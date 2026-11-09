@@ -16,7 +16,7 @@ from tkinter.scrolledtext import ScrolledText
 import serial
 from serial.tools import list_ports
 
-from uart_flash import Bootloader, BootloaderError, Cancelled, load_image, upload
+from uart_flash import Bootloader, BootloaderError, Cancelled, is_bootloader_port, load_image, upload
 
 BAUDS = ["9600", "19200", "38400", "57600", "115200", "230400", "460800"]
 
@@ -49,7 +49,7 @@ class App(tk.Tk):
         self.port_cb.grid(row=0, column=1, sticky="ew", **pad)
         ttk.Button(frm, text="새로고침", command=self.refresh_ports).grid(row=0, column=2, sticky="ew", **pad)
 
-        ttk.Label(frm, text="속도").grid(row=1, column=0, sticky="w", **pad)
+        ttk.Label(frm, text="속도(UART)").grid(row=1, column=0, sticky="w", **pad)   # USB CDC 는 무시됨
         self.baud_var = tk.StringVar(value="115200")
         ttk.Combobox(frm, textvariable=self.baud_var, values=BAUDS, width=10).grid(
             row=1, column=1, sticky="w", **pad)
@@ -82,10 +82,21 @@ class App(tk.Tk):
 
     def refresh_ports(self):
         ports = sorted(list_ports.comports(), key=lambda p: p.device)
-        self.port_items = {f"{p.device} - {p.description}": p.device for p in ports}
+        self.port_items = {}
+        self.bl_ports = {p.device for p in ports if is_bootloader_port(p)}
+        preferred = None
+        for p in ports:
+            usb = is_bootloader_port(p)
+            name = f"{p.device} - {p.description}" + ("  [STM32 USB CDC]" if usb else "")
+            self.port_items[name] = p.device
+            if usb and preferred is None:
+                preferred = name
         names = list(self.port_items)
         self.port_cb["values"] = names
-        if self.port_var.get() not in names:
+        # 부트로더(USB CDC) 포트가 보이면 그걸 우선 선택
+        if preferred:
+            self.port_var.set(preferred)
+        elif self.port_var.get() not in names:
             self.port_var.set(names[0] if names else "")
 
     def browse(self):
@@ -113,6 +124,13 @@ class App(tk.Tk):
             return
         if not os.path.isfile(path):
             messagebox.showwarning("펌웨어", "펌웨어 .bin 파일을 선택하세요.")
+            return
+        # 부트로더는 USB CDC(0483:5740)로만 응답한다. 목록에 그 포트가 있는데 다른 걸 골랐거나, 아직 안 보이는 경우 확인
+        if port not in self.bl_ports and not messagebox.askyesno(
+                "포트 확인",
+                f"{port} 는 STM32 USB CDC(0483:5740) 포트가 아닙니다.\n"
+                "CH340(UART) 포트에는 부트로더가 응답하지 않습니다.\n\n"
+                "그래도 계속할까요? (리셋 후 USB 포트가 나중에 나타나는 경우라면 '예')"):
             return
         try:
             baud = int(self.baud_var.get())
